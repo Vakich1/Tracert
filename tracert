@@ -1,4 +1,4 @@
-from scapy.all import IP, ICMP, sr1, getmacbyip
+from scapy.all import IP, ICMP, sr1
 import sys
 import time
 import socket
@@ -6,7 +6,7 @@ import socket
 
 def calculate_checksum(packet):
     if len(packet) % 2 == 1:
-        packet += b'\x00'  
+        packet += b'\x00'
     checksum = 0
     for i in range(0, len(packet), 2):
         word = (packet[i] << 8) + packet[i + 1]
@@ -21,13 +21,18 @@ def calculate_checksum(packet):
 def tracert(destination, max_hops=30, timeout=1, num_packets=3):
     print(f'Tracing route to {destination}')
 
+    try:
+        destination_ip = socket.gethostbyname(destination)  # Разрешаем доменное имя в IP
+    except socket.gaierror:
+        print(f"Error: Cannot resolve {destination}")
+        sys.exit(1)
+
     for ttl in range(1, max_hops + 1):
         hop_result = []
         reached_destination = False
 
         for _ in range(num_packets):
             pkt = IP(dst=destination, ttl=ttl) / ICMP()
-
             pkt[ICMP].chksum = 0
             pkt[ICMP].chksum = calculate_checksum(bytes(pkt[ICMP]))
 
@@ -41,20 +46,27 @@ def tracert(destination, max_hops=30, timeout=1, num_packets=3):
                 response_time = round((end_time - start_time) * 1000, 2)
                 hop_result.append(f'{response_time} ms')
 
-                if reply.src == destination:
-                    reached_destination = True
+        last_reply = reply.src if reply is not None else '*'
 
-        if hop_result:
-            last_reply = reply.src if reply is not None else '*'
-            try:
-                host = socket.gethostbyaddr(last_reply)[0] if last_reply != '*' else last_reply
-            except socket.herror:
-                host = last_reply
+        try:
+            host = socket.gethostbyaddr(last_reply)[0] if last_reply != '*' else last_reply
+        except (socket.herror, socket.gaierror):
+            host = last_reply  # Если не удалось разрешить IP, оставляем IP-адрес
 
-            print(f'{ttl}  ' + '  '.join(hop_result) + f'  {host}')
+        # Проверка: дошли ли мы до целевого узла
+        if reply is not None and (reply.src == destination_ip or host == destination):
+            reached_destination = True
+
+        if host != last_reply:
+            print(f'{ttl}  ' + '  '.join(hop_result) + f'  {last_reply} ({host})')
+        else:
+            print(f'{ttl}  ' + '  '.join(hop_result) + f'  {last_reply}')
 
         if reached_destination:
-            print(f"Destination reached: {destination}")
+            if destination != destination_ip:
+                print(f"Destination reached: {destination} ({destination_ip})")
+            else:
+                print(f"Destination reached: {destination}")
             break
 
 
